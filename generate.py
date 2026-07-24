@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Generate a neofetch-style profile card SVG (dark + light) from avatar.png.
-Left column: colored ASCII art of the avatar. Right column: info panel.
+Left: the avatar image (inverted on the dark theme). Right: info panel.
 Edit the DATA block below, then run:  python3 generate.py
 """
+import base64
+import io
 import json
 import os
 import urllib.request
-from PIL import Image
+from PIL import Image, ImageOps
 from html import escape
 
 GH_USER = "enzo-wego"
-COLS = 76          # ascii art width in chars (higher = finer portrait)
-RAMP = " .':-~=+*a#%@$B8&W"   # density ramp: sparse -> dense
-BG_CUT = 0.78      # pixels brighter than this are treated as background (blanked)
-CROP = (0.03, 0.0, 0.80, 1.0)  # (l,t,r,b) fractions: trim the gold pillar on the right
+CROP = (0.05, 0.03, 0.58, 0.42)  # (l,t,r,b) fractions: crop to the figure bust
+ART_H = 340                       # displayed avatar height in px
 
 
 def gh_stats(user):
@@ -51,9 +51,6 @@ DATA = {
             ("Email.Work", "enzo@wego.com"),
             ("GitHub", "enzo-wego"),
         ]),
-        ("Certifications", [
-            ("Claude Code in Action", "Anthropic (2026)"),
-        ]),
         ("GitHub Stats", gh_stats(GH_USER)),
     ],
 }
@@ -67,54 +64,25 @@ THEMES = {
 
 CW, LH = 8.0, 17.0            # panel char cell / line height
 PANEL_FS = 13
-ART_CW, ART_LH, ART_FS = 6.0, 10.5, 10   # finer cell for the portrait
 
 
-def _lerp(c1, c2, f):
-    a = (int(c1[1:3], 16), int(c1[3:5], 16), int(c1[5:7], 16))
-    b = (int(c2[1:3], 16), int(c2[3:5], 16), int(c2[5:7], 16))
-    r, g, bl = (round(a[i] + (b[i] - a[i]) * f) for i in range(3))
-    return f"#{r:02x}{g:02x}{bl:02x}"
-
-
-def _shade(r, g, b, theme):
-    """Recolor a pixel so the subject reads well on the card background.
-    Boosts saturation, then lifts shadows (dark theme) or deepens (light)."""
-    m = (r + g + b) / 3
-    sat = 1.35                                    # push away from grey
-    r, g, b = (max(0, min(255, m + (c - m) * sat)) for c in (r, g, b))
-    if theme == "dark":
-        r, g, b = (c * 0.62 + 74 for c in (r, g, b))   # 0->74, 255->232
-    else:
-        r, g, b = (c * 0.80 for c in (r, g, b))        # deepen for white bg
-    return f"#{int(r):02x}{int(g):02x}{int(b):02x}"
-
-
-def ascii_art(path, theme):
-    """Return list of rows; each row is list of (char, '#rrggbb').
-    Real photo colors mapped to a density ramp; bright background blanked."""
+def art_image(path, theme):
+    """Crop the avatar to the figure and return (disp_w, disp_h, data_uri).
+    Inverted on the dark theme so the cream engraving blends into the card."""
     img = Image.open(path).convert("RGB")
     w, h = img.size
     l, tp, r, bt = CROP
     img = img.crop((int(l * w), int(tp * h), int(r * w), int(bt * h)))
+    if theme == "dark":
+        img = ImageOps.invert(img)
     w, h = img.size
-    rows = max(1, round(COLS * (h / w) * (ART_CW / ART_LH)))  # keep image aspect
-    img = img.resize((COLS, rows))
-    px = img.load()
-    t = THEMES[theme]
-    out = []
-    for y in range(rows):
-        row = []
-        for x in range(COLS):
-            r, g, b = px[x, y]
-            lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
-            if lum >= BG_CUT:
-                row.append((" ", t["bg"])); continue
-            density = 1 - (lum / BG_CUT)          # dark pixel -> dense char
-            ch = RAMP[min(len(RAMP) - 1, int(density * len(RAMP)))]
-            row.append((ch, _shade(r, g, b, theme)))
-        out.append(row)
-    return out
+    disp_w = ART_H * w / h
+    img = img.resize((round(disp_w * 2), ART_H * 2))   # 2x for retina
+    img = img.convert("L")                             # grayscale -> much smaller PNG
+    buf = io.BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    return disp_w, ART_H, uri
 
 
 def _tl(nchars):
@@ -187,26 +155,23 @@ def panel_svg(data, t, x0, y0, maxc):
 
 def build(theme):
     t = THEMES[theme]
-    rows = ascii_art("avatar.png", theme)
+    art_w, art_h, uri = art_image("avatar.png", theme)
     pad = 28
-    art_w = COLS * ART_CW
-    art_h = len(rows) * ART_LH
     maxc = 52                       # panel width in characters
     panel_w = maxc * CW
-    # measure panel height with a throwaway pass, then center both columns
-    _, panel_end = panel_svg(DATA, t, 0, 0, maxc)
+    _, panel_end = panel_svg(DATA, t, 0, 0, maxc)   # measure panel height
     panel_h = panel_end
     body_h = max(art_h, panel_h)
     H = body_h + pad * 2
-    px0 = pad + art_w + 40
-    art_y = pad + (body_h - art_h) / 2 + ART_LH
+    px0 = pad + art_w + 44
+    art_y = pad + (body_h - art_h) / 2
     py0 = pad + (body_h - panel_h) / 2 + LH
     panel, _ = panel_svg(DATA, t, px0, py0, maxc)
     W = px0 + panel_w + pad
-    art = art_svg(rows, pad, art_y)
     return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W:.0f}" height="{H:.0f}" viewBox="0 0 {W:.0f} {H:.0f}" font-family="'JetBrains Mono','Fira Mono','DejaVu Sans Mono',Consolas,monospace" font-size="{PANEL_FS}">
+<defs><clipPath id="r"><rect x="{pad}" y="{art_y:.0f}" width="{art_w:.0f}" height="{art_h:.0f}" rx="10"/></clipPath></defs>
 <rect width="{W:.0f}" height="{H:.0f}" rx="14" fill="{t["bg"]}"/>
-{art}
+<image x="{pad}" y="{art_y:.0f}" width="{art_w:.0f}" height="{art_h:.0f}" clip-path="url(#r)" preserveAspectRatio="xMidYMid slice" href="{uri}"/>
 {panel}
 </svg>
 '''
