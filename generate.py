@@ -8,11 +8,11 @@ import io
 import json
 import os
 import urllib.request
-from PIL import Image, ImageOps
+from PIL import Image
 from html import escape
 
 GH_USER = "enzo-wego"
-CROP = (0.05, 0.03, 0.58, 0.42)  # (l,t,r,b) fractions: crop to the figure bust
+CROP = (0.0, 0.0, 1.0, 1.0)       # avatar.png is already framed by engrave.py
 ART_H = 340                       # displayed avatar height in px
 
 
@@ -66,19 +66,18 @@ CW, LH = 8.0, 17.0            # panel char cell / line height
 PANEL_FS = 13
 
 
-def art_image(path, theme):
-    """Crop the avatar to the figure and return (disp_w, disp_h, data_uri).
-    Inverted on the dark theme so the cream engraving blends into the card."""
+def art_image(theme):
+    """Return (disp_w, disp_h, data_uri) for the theme's pre-rendered engraving."""
+    path = "avatar_dark.png" if theme == "dark" else "avatar.png"
     img = Image.open(path).convert("RGB")
     w, h = img.size
     l, tp, r, bt = CROP
     img = img.crop((int(l * w), int(tp * h), int(r * w), int(bt * h)))
-    if theme == "dark":
-        img = ImageOps.invert(img)
     w, h = img.size
     disp_w = ART_H * w / h
     img = img.resize((round(disp_w * 2), ART_H * 2))   # 2x for retina
-    img = img.convert("L")                             # grayscale -> much smaller PNG
+    if theme == "light":
+        img = img.convert("L")                         # grayscale -> smaller PNG
     buf = io.BytesIO()
     img.save(buf, "PNG", optimize=True)
     uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
@@ -155,7 +154,7 @@ def panel_svg(data, t, x0, y0, maxc):
 
 def build(theme):
     t = THEMES[theme]
-    art_w, art_h, uri = art_image("avatar.png", theme)
+    art_w, art_h, uri = art_image(theme)
     pad = 28
     maxc = 52                       # panel width in characters
     panel_w = maxc * CW
