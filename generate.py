@@ -10,9 +10,10 @@ from PIL import Image
 from html import escape
 
 GH_USER = "enzo-wego"
-COLS = 52          # ascii art width in chars
-RAMP = " .:-=+*#%@&$B8"   # density ramp: sparse -> dense
-BG_CUT = 0.74      # pixels brighter than this are treated as background (blanked)
+COLS = 76          # ascii art width in chars (higher = finer portrait)
+RAMP = " .':-~=+*a#%@$B8&W"   # density ramp: sparse -> dense
+BG_CUT = 0.78      # pixels brighter than this are treated as background (blanked)
+CROP = (0.03, 0.0, 0.80, 1.0)  # (l,t,r,b) fractions: trim the gold pillar on the right
 
 
 def gh_stats(user):
@@ -28,21 +29,10 @@ def gh_stats(user):
 
     try:
         u = get(f"https://api.github.com/users/{user}")
-        stars, page = 0, 1
-        while True:
-            repos = get(f"https://api.github.com/users/{user}/repos?per_page=100&page={page}")
-            if not repos:
-                break
-            stars += sum(r["stargazers_count"] for r in repos)
-            if len(repos) < 100:
-                break
-            page += 1
-        return [("Repos", str(u["public_repos"])),
-                ("Stars", str(stars)),
-                ("Followers", str(u["followers"]))]
+        return [("Repos", str(u["public_repos"]))]
     except Exception as e:  # network/rate-limit: keep the card renderable
-        print(f"gh_stats failed ({e}); using placeholders")
-        return [("Repos", "—"), ("Stars", "—"), ("Followers", "—")]
+        print(f"gh_stats failed ({e}); using placeholder")
+        return [("Repos", "—")]
 
 DATA = {
     "user": "enzo@wego",
@@ -75,7 +65,9 @@ THEMES = {
               "accent": "#34548a", "rule": "#a1a6c5", "value": "#343b58"},
 }
 
-CW, LH = 8.0, 17.0   # monospace char cell (forced via textLength) / line height
+CW, LH = 8.0, 17.0            # panel char cell / line height
+PANEL_FS = 13
+ART_CW, ART_LH, ART_FS = 6.0, 10.5, 10   # finer cell for the portrait
 
 
 def _lerp(c1, c2, f):
@@ -85,29 +77,42 @@ def _lerp(c1, c2, f):
     return f"#{r:02x}{g:02x}{bl:02x}"
 
 
+def _shade(r, g, b, theme):
+    """Recolor a pixel so the subject reads well on the card background.
+    Boosts saturation, then lifts shadows (dark theme) or deepens (light)."""
+    m = (r + g + b) / 3
+    sat = 1.35                                    # push away from grey
+    r, g, b = (max(0, min(255, m + (c - m) * sat)) for c in (r, g, b))
+    if theme == "dark":
+        r, g, b = (c * 0.62 + 74 for c in (r, g, b))   # 0->74, 255->232
+    else:
+        r, g, b = (c * 0.80 for c in (r, g, b))        # deepen for white bg
+    return f"#{int(r):02x}{int(g):02x}{int(b):02x}"
+
+
 def ascii_art(path, theme):
     """Return list of rows; each row is list of (char, '#rrggbb').
-    Dark subject on a bright background -> dense chars for the subject,
-    blank for the background, colored with a vertical theme gradient."""
+    Real photo colors mapped to a density ramp; bright background blanked."""
     img = Image.open(path).convert("RGB")
     w, h = img.size
-    rows = max(1, round(COLS * (h / w) * 0.5))  # 0.5 = char aspect correction
+    l, tp, r, bt = CROP
+    img = img.crop((int(l * w), int(tp * h), int(r * w), int(bt * h)))
+    w, h = img.size
+    rows = max(1, round(COLS * (h / w) * (ART_CW / ART_LH)))  # keep image aspect
     img = img.resize((COLS, rows))
     px = img.load()
     t = THEMES[theme]
-    top, bot = t["accent"], t["label"]
     out = []
     for y in range(rows):
-        gcol = _lerp(top, bot, y / max(1, rows - 1))
         row = []
         for x in range(COLS):
             r, g, b = px[x, y]
             lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
             if lum >= BG_CUT:
-                row.append((" ", gcol)); continue
-            density = 1 - (lum / BG_CUT)          # dark pixel -> dense
+                row.append((" ", t["bg"])); continue
+            density = 1 - (lum / BG_CUT)          # dark pixel -> dense char
             ch = RAMP[min(len(RAMP) - 1, int(density * len(RAMP)))]
-            row.append((ch, gcol))
+            row.append((ch, _shade(r, g, b, theme)))
         out.append(row)
     return out
 
@@ -118,9 +123,9 @@ def _tl(nchars):
 
 
 def art_svg(rows, x0, y0):
-    lines = []
+    lines = [f'<g font-size="{ART_FS}">']
     for i, row in enumerate(rows):
-        y = y0 + i * LH
+        y = y0 + i * ART_LH
         spans, run, color = [], "", None
         for ch, col in row:
             if col != color and run:
@@ -131,8 +136,10 @@ def art_svg(rows, x0, y0):
         tspans = "".join(
             f'<tspan fill="{c}">{escape(t).replace(" ", "&#160;")}</tspan>'
             for t, c in spans)
-        lines.append(f'<text x="{x0}" y="{y:.0f}" {_tl(COLS)} '
+        lines.append(f'<text x="{x0}" y="{y:.1f}" '
+                     f'textLength="{COLS*ART_CW:.1f}" lengthAdjust="spacingAndGlyphs" '
                      f'xml:space="preserve">{tspans}</text>')
+    lines.append("</g>")
     return "\n".join(lines)
 
 
@@ -181,17 +188,23 @@ def panel_svg(data, t, x0, y0, maxc):
 def build(theme):
     t = THEMES[theme]
     rows = ascii_art("avatar.png", theme)
-    pad = 24
-    art_w = (COLS + 2) * CW
-    art_h = len(rows) * LH
-    px0, py0 = pad + art_w + 24, pad + LH
+    pad = 28
+    art_w = COLS * ART_CW
+    art_h = len(rows) * ART_LH
     maxc = 52                       # panel width in characters
     panel_w = maxc * CW
-    panel, panel_end = panel_svg(DATA, t, px0, py0, maxc)
+    # measure panel height with a throwaway pass, then center both columns
+    _, panel_end = panel_svg(DATA, t, 0, 0, maxc)
+    panel_h = panel_end
+    body_h = max(art_h, panel_h)
+    H = body_h + pad * 2
+    px0 = pad + art_w + 40
+    art_y = pad + (body_h - art_h) / 2 + ART_LH
+    py0 = pad + (body_h - panel_h) / 2 + LH
+    panel, _ = panel_svg(DATA, t, px0, py0, maxc)
     W = px0 + panel_w + pad
-    H = max(art_h, panel_end - py0) + pad * 2
-    art = art_svg(rows, pad, pad + LH)
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W:.0f}" height="{H:.0f}" viewBox="0 0 {W:.0f} {H:.0f}" font-family="'JetBrains Mono','Fira Mono','DejaVu Sans Mono',Consolas,monospace" font-size="13">
+    art = art_svg(rows, pad, art_y)
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W:.0f}" height="{H:.0f}" viewBox="0 0 {W:.0f} {H:.0f}" font-family="'JetBrains Mono','Fira Mono','DejaVu Sans Mono',Consolas,monospace" font-size="{PANEL_FS}">
 <rect width="{W:.0f}" height="{H:.0f}" rx="14" fill="{t["bg"]}"/>
 {art}
 {panel}
