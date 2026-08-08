@@ -26,6 +26,6 @@
 <text x="679.8" y="278" textLength="72.0" lengthAdjust="spacingAndGlyphs" fill="#343b58">enzo-wego</text>
 <text x="335.7931034482759" y="302" textLength="120.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#343b58">— <tspan fill="#34548a" font-weight="bold">GitHub Stats</tspan> </text>
 <line x1="464" y1="297" x2="752" y2="297" stroke="#a1a6c5" stroke-width="1.5"/>
-<text x="335.7931034482759" y="319" textLength="392.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"><tspan fill="#8c4351" font-weight="bold">Repos</tspan><tspan fill="#a1a6c5">: ..........................................</tspan></text>
-<text x="735.8" y="319" textLength="16.0" lengthAdjust="spacingAndGlyphs" fill="#343b58">10</text>
+<text x="335.7931034482759" y="319" textLength="400.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"><tspan fill="#8c4351" font-weight="bold">Repos</tspan><tspan fill="#a1a6c5">: ...........................................</tspan></text>
+<text x="743.8" y="319" textLength="8.0" lengthAdjust="spacingAndGlyphs" fill="#343b58">9</text>
 </svg>
